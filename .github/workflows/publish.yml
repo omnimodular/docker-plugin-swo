@@ -43,6 +43,7 @@ jobs:
           docker build -t rootfsimage -f output/Dockerfile.build output/
           id=$(docker create rootfsimage true)
           docker export "$id" | sudo tar -x --owner root --group root --no-same-owner -C swo/rootfs
+          sudo chmod -R a+rX swo/rootfs
           docker rm -vf "$id"
           docker rmi rootfsimage
 

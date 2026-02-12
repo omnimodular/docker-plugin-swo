@@ -1,10 +1,14 @@
+> **Community Project** — This is an independent, community-maintained Docker logging plugin. It is **not affiliated with, endorsed by, or supported by SolarWinds** in any way. Use at your own risk.
+
+---
+
 # docker-plugin-swo
 
 A Docker logging plugin that ships container logs to [SolarWinds Observability](https://www.solarwinds.com/solarwinds-observability) (SWO) via syslog-over-HTTPS.
 
 ## Installation
 
-    docker plugin install docker-plugin-swo
+    docker plugin install ghcr.io/omnimodular/docker-plugin-swo
 
 The plugin requires host network access for sending logs. Accept the permission when prompted.
 
@@ -22,7 +26,7 @@ The plugin requires host network access for sending logs. Accept the permission 
 ### Per-container
 
     docker run --rm \
-        --log-driver docker-plugin-swo \
+        --log-driver ghcr.io/omnimodular/docker-plugin-swo \
         --log-opt swo-url=https://your-swo-endpoint/logs \
         --log-opt swo-token=YOUR_TOKEN \
         --log-opt swo-service-name=my-app \
@@ -33,7 +37,7 @@ The plugin requires host network access for sending logs. Accept the permission 
 Set the default logging driver in `/etc/docker/daemon.json`:
 
     {
-      "log-driver": "docker-plugin-swo",
+      "log-driver": "ghcr.io/omnimodular/docker-plugin-swo",
       "log-opts": {
         "swo-url": "https://your-swo-endpoint/logs",
         "swo-token": "YOUR_TOKEN",
@@ -60,3 +64,11 @@ Then restart Docker:
 View plugin logs:
 
     journalctl -u docker.service -f
+
+---
+
+## Disclaimer
+
+This project is an independent, community-driven effort and is not affiliated with, sponsored by, endorsed by, or in any way officially connected with SolarWinds Worldwide, LLC, or any of its subsidiaries or affiliates. The names "SolarWinds" and "SWO" as well as related names, marks, emblems, and images are trademarks of their respective owners. Use of these names in this project is for identification purposes only and does not imply any affiliation or endorsement.
+
+This software is provided "as is", without warranty of any kind, express or implied. The maintainers make no guarantees regarding reliability, availability, or fitness for any particular purpose. Use this software at your own risk.
