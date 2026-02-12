@@ -52,7 +52,7 @@ Then restart Docker:
 
 ## Notes
 
-- `docker logs` is **not supported** — this plugin ships logs to SWO only.
+- `docker logs` is supported via Docker's built-in [dual logging](https://docs.docker.com/engine/logging/dual-logging/) cache (Docker 20.10+).
 - Log messages are formatted as RFC 5424 syslog and sent via HTTPS with bearer token auth.
 - JSON log messages are automatically minified (large objects/arrays truncated) before shipping.
 - Syslog severity is auto-detected from a `"level"` field in JSON messages, or from the presence of `"error"` in plain text.
