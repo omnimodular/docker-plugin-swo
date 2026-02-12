@@ -1,0 +1,11 @@
+# Only output/docker-swo-log-driver is needed in the Docker build context
+.git
+.github
+swo/
+cmd/
+*.md
+LICENSE
+go.mod
+go.sum
+.gitignore
+.dockerignore

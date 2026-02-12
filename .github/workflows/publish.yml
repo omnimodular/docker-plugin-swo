@@ -25,7 +25,9 @@ jobs:
           go-version: "1.24"
 
       - name: Build binary
-        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o output/docker-swo-log-driver
+        run: |
+          mkdir -p output
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o output/docker-swo-log-driver ./cmd/docker-swo-log-driver
 
       - name: Determine tag
         id: tag
@@ -40,7 +42,7 @@ jobs:
         run: |
           mkdir -p swo/rootfs
           cp config.json swo/
-          docker build -t rootfsimage -f output/Dockerfile.build output/
+          docker build -t rootfsimage -f Dockerfile .
           id=$(docker create rootfsimage true)
           docker export "$id" | sudo tar -x --owner root --group root --no-same-owner -C swo/rootfs
           sudo chmod -R a+rX swo/rootfs

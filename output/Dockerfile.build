@@ -1,4 +1,0 @@
-FROM alpine:3.19
-RUN apk add --no-cache ca-certificates
-ADD docker-swo-log-driver /usr/bin/
-RUN chmod +x /usr/bin/docker-swo-log-driver

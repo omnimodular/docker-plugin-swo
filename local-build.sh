@@ -2,7 +2,7 @@
 echo "Starting plugin build"
 
 echo "Docker cleanup"
-docker rm $(docker ps -qa)
+docker ps -qa | xargs -r docker rm
 docker image prune -f
 docker volume prune -f
 
@@ -14,10 +14,11 @@ docker plugin rm docker-plugin-swo
 
 #######################
 echo "Executable cleanup"
-rm -f docker-swo-log-driver
+rm -rf output/
 
 echo "Building executable"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o output/docker-swo-log-driver
+mkdir -p output
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o output/docker-swo-log-driver ./cmd/docker-swo-log-driver
 #######################
 
 echo "cleanup"
@@ -30,10 +31,7 @@ echo "Copying configs"
 cp config.json swo/
 
 echo "Building docker image"
-docker build -t rootfsimage -f output/Dockerfile.build output/
-
-echo "Executable cleanup"
-rm -f docker-swo-log-driver
+docker build -t rootfsimage -f Dockerfile .
 
 echo "Creating a container with the image"
 id=$(docker create rootfsimage true)

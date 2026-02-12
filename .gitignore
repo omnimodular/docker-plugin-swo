@@ -1,4 +1,4 @@
 .vscode/
-output/docker-swo-log-driver
+output/
 swo/
 rootfs.tar
