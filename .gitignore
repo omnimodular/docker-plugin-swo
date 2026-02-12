@@ -1,5 +1,4 @@
 .vscode/
-
-papertrail/
-
-output/docker-papertrail-log-driver
+output/docker-swo-log-driver
+swo/
+rootfs.tar

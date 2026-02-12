@@ -1,0 +1,55 @@
+name: Build and Publish Docker Plugin
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  PLUGIN_NAME: ghcr.io/omnimodular/docker-plugin-swo
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Build binary
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o output/docker-swo-log-driver
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build rootfs
+        run: |
+          mkdir -p swo/rootfs
+          cp config.json swo/
+          docker build -t rootfsimage -f output/Dockerfile.build output/
+          id=$(docker create rootfsimage true)
+          docker export "$id" | sudo tar -x --owner root --group root --no-same-owner -C swo/rootfs
+          docker rm -vf "$id"
+          docker rmi rootfsimage
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Create and push plugin
+        run: |
+          docker plugin create "$PLUGIN_NAME:${{ steps.tag.outputs.version }}" swo/
+          docker plugin push "$PLUGIN_NAME:${{ steps.tag.outputs.version }}"

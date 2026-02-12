@@ -29,7 +29,7 @@ func main() {
 
 	h := sdk.NewHandler(`{"Implements": ["LoggingDriver"]}`)
 	handlers(&h, newDriver())
-	if err := h.ServeUnix("papertrail", 0); err != nil {
+	if err := h.ServeUnix("swo", 0); err != nil {
 		panic(err)
 	}
 }

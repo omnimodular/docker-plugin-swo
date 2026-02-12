@@ -16,16 +16,13 @@ import (
 	protoio "github.com/gogo/protobuf/io"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"github.com/tonistiigi/fifo"
+	"github.com/containerd/fifo"
 )
 
 type driver struct {
-	mu     sync.Mutex
-	logs   map[string]*logPair
-	idx    map[string]*logPair
-	logger logger.Logger
-
-	loopFactor bool
+	mu   sync.Mutex
+	logs map[string]*logPair
+	idx  map[string]*logPair
 }
 
 type logPair struct {
@@ -33,18 +30,18 @@ type logPair struct {
 	logReader  logger.LogReader
 	stream     io.ReadCloser
 	info       logger.Info
+	done       chan struct{}
 }
 
 func newDriver() *driver {
 	return &driver{
-		logs:       make(map[string]*logPair),
-		idx:        make(map[string]*logPair),
-		loopFactor: true,
+		logs: make(map[string]*logPair),
+		idx:  make(map[string]*logPair),
 	}
 }
 
 func (d *driver) StartLogging(file string, logCtx logger.Info) error {
-	logrus.Infof("Paper trail - Start logging")
+	logrus.Info("SWO - Start logging")
 
 	d.mu.Lock()
 	if _, exists := d.logs[file]; exists {
@@ -60,17 +57,17 @@ func (d *driver) StartLogging(file string, logCtx logger.Info) error {
 		return errors.Wrap(err, "error setting up logger dir")
 	}
 
-	l, err := newPaperTrailLogShipper(logCtx)
+	l, err := newSwoLogShipper(logCtx)
 	if err != nil {
-		return errors.Wrap(err, "error creating papertrail log shipper")
+		return errors.Wrap(err, "error creating SWO log shipper")
 	}
 
-	r, err := newPaperTrailLogReader(logCtx)
+	r, err := newSwoLogReader(logCtx)
 	if err != nil {
-		return errors.Wrap(err, "error creating papertrail log reader")
+		return errors.Wrap(err, "error creating SWO log reader")
 	}
 
-	logrus.WithField("id", logCtx.ContainerID).WithField("file", file).WithField("logpath", logCtx.LogPath).Debugf("Start logging")
+	logrus.WithField("id", logCtx.ContainerID).WithField("file", file).WithField("logpath", logCtx.LogPath).Debug("Start logging")
 	f, err := fifo.OpenFifo(context.Background(), file, syscall.O_RDONLY, 0700)
 	if err != nil {
 		return errors.Wrapf(err, "error opening logger fifo: %q", file)
@@ -82,6 +79,7 @@ func (d *driver) StartLogging(file string, logCtx logger.Info) error {
 		logReader:  r,
 		stream:     f,
 		info:       logCtx,
+		done:       make(chan struct{}),
 	}
 	d.logs[file] = lf
 	d.idx[logCtx.ContainerID] = lf
@@ -92,11 +90,11 @@ func (d *driver) StartLogging(file string, logCtx logger.Info) error {
 }
 
 func (d *driver) StopLogging(file string) error {
-	logrus.WithField("file", file).Debugf("Stop logging")
+	logrus.WithField("file", file).Debug("Stop logging")
 	d.mu.Lock()
-	d.loopFactor = false
 	lf, ok := d.logs[file]
 	if ok {
+		close(lf.done)
 		lf.logShipper.Close()
 		lf.stream.Close()
 		delete(d.logs, file)
@@ -109,7 +107,13 @@ func (d *driver) consumeLog(lf *logPair) {
 	dec := protoio.NewUint32DelimitedReader(lf.stream, binary.BigEndian, 1e6)
 	defer dec.Close()
 	var buf logdriver.LogEntry
-	for d.loopFactor {
+	for {
+		select {
+		case <-lf.done:
+			return
+		default:
+		}
+
 		if err := dec.ReadMsg(&buf); err != nil {
 			if err == io.EOF {
 				logrus.WithField("id", lf.info.ContainerID).WithError(err).Debug("shutting down log logger")
@@ -121,7 +125,6 @@ func (d *driver) consumeLog(lf *logPair) {
 		var msg logger.Message
 		msg.Line = buf.Line
 		msg.Source = buf.Source
-		msg.Partial = buf.Partial
 		msg.Timestamp = time.Unix(0, buf.TimeNano)
 
 		if err := lf.logShipper.Log(&msg); err != nil {
@@ -138,13 +141,13 @@ func (d *driver) ReadLogs(info logger.Info, config logger.ReadConfig) (io.ReadCl
 	lf, exists := d.idx[info.ContainerID]
 	d.mu.Unlock()
 	if !exists {
-		return nil, fmt.Errorf("papertrail logger does not exist for %s", info.ContainerID)
+		return nil, fmt.Errorf("SWO logger does not exist for %s", info.ContainerID)
 	}
 
 	r, w := io.Pipe()
 	lr, ok := lf.logReader.(logger.LogReader)
 	if !ok {
-		return nil, fmt.Errorf("papertrail logger does not support reading")
+		return nil, fmt.Errorf("SWO logger does not support reading")
 	}
 
 	go func() {
@@ -152,11 +155,14 @@ func (d *driver) ReadLogs(info logger.Info, config logger.ReadConfig) (io.ReadCl
 
 		enc := protoio.NewUint32DelimitedWriter(w, binary.BigEndian)
 		defer enc.Close()
-		defer watcher.Close()
+		defer watcher.ConsumerGone()
 
 		var buf logdriver.LogEntry
-		for d.loopFactor {
+		for {
 			select {
+			case <-lf.done:
+				w.Close()
+				return
 			case msg, ok := <-watcher.Msg:
 				if !ok {
 					w.Close()
@@ -164,7 +170,6 @@ func (d *driver) ReadLogs(info logger.Info, config logger.ReadConfig) (io.ReadCl
 				}
 
 				buf.Line = msg.Line
-				buf.Partial = msg.Partial
 				buf.TimeNano = msg.Timestamp.UnixNano()
 				buf.Source = msg.Source
 
