@@ -27,13 +27,14 @@ const (
 )
 
 type swoLogShipper struct {
-	url         string
-	token       string
-	serviceName string
-	hostname    string
-	appName     string
-	jsonLimit   int
-	httpClient  *http.Client
+	url           string
+	token         string
+	serviceName   string
+	hostname      string
+	appName       string
+	jsonLimit     int
+	syslogLevelPrefix bool
+	httpClient    *http.Client
 
 	queue chan string
 	done  chan struct{}
@@ -60,6 +61,11 @@ func newSwoLogShipper(logCtx logger.Info) (*swoLogShipper, error) {
 		}
 	}
 
+	syslogLevelPrefix := true
+	if v := logCtx.Config["swo-syslog-level-prefix"]; v == "false" || v == "0" {
+		syslogLevelPrefix = false
+	}
+
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "unknown"
@@ -73,15 +79,16 @@ func newSwoLogShipper(logCtx logger.Info) (*swoLogShipper, error) {
 	log.Infof("Creating SWO log shipper for %s (container: %s)", url, appName)
 
 	s := &swoLogShipper{
-		url:         url,
-		token:       token,
-		serviceName: serviceName,
-		hostname:    hostname,
-		appName:     appName,
-		jsonLimit:   jsonLimit,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
-		queue:       make(chan string, queueSize),
-		done:        make(chan struct{}),
+		url:           url,
+		token:         token,
+		serviceName:   serviceName,
+		hostname:      hostname,
+		appName:       appName,
+		jsonLimit:     jsonLimit,
+		syslogLevelPrefix: syslogLevelPrefix,
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		queue:         make(chan string, queueSize),
+		done:          make(chan struct{}),
 	}
 
 	s.wg.Add(1)
@@ -99,8 +106,20 @@ func (s *swoLogShipper) Log(msg *logger.Message) error {
 		return nil
 	}
 
-	line := minifyJSON(string(msg.Line), s.jsonLimit)
-	severity := syslogSeverity(line)
+	line := string(msg.Line)
+	var severity int
+	if s.syslogLevelPrefix {
+		if sev, stripped, ok := parseSyslogLevelPrefix(line); ok {
+			severity = sev
+			line = minifyJSON(stripped, s.jsonLimit)
+		} else {
+			line = minifyJSON(line, s.jsonLimit)
+			severity = syslogSeverity(line)
+		}
+	} else {
+		line = minifyJSON(line, s.jsonLimit)
+		severity = syslogSeverity(line)
+	}
 	prival := 8 + severity
 
 	syslogMsg := fmt.Sprintf("<%d>1 %s %s %s - - - %s",
@@ -209,6 +228,20 @@ func (s *swoLogShipper) send(msg string) error {
 	}
 
 	return nil
+}
+
+// parseSyslogLevelPrefix checks if msg starts with a systemd-style syslog level
+// prefix of the form <N> where N is 0–7 (per sd-daemon(3) / SyslogLevelPrefix=).
+// Returns (severity, stripped message, true) on match, otherwise (0, msg, false).
+func parseSyslogLevelPrefix(msg string) (int, string, bool) {
+	if len(msg) < 3 || msg[0] != '<' || msg[2] != '>' {
+		return 0, msg, false
+	}
+	d := msg[1]
+	if d < '0' || d > '7' {
+		return 0, msg, false
+	}
+	return int(d - '0'), msg[3:], true
 }
 
 // syslogSeverity maps a log message to a syslog severity level (RFC 5424).
