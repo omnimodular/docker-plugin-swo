@@ -18,6 +18,7 @@ The plugin requires host network access for sending logs. Accept the permission 
 |--------|----------|-------------|---------|
 | `swo-url` | Yes | SWO HTTPS log ingestion endpoint | — |
 | `swo-token` | Yes | SWO API token for authentication | — |
+| `tag` | No | Docker log-tag template for the syslog app name | Container name (without leading `/`), then first 12 ID characters |
 | `swo-service-name` | No | Value for `service.name` OpenTelemetry resource attribute | — |
 | `swo-json-limit` | No | Max items per JSON object/array before truncation (0 to disable) | `20` |
 
@@ -49,6 +50,34 @@ Set the default logging driver in `/etc/docker/daemon.json`:
 Then restart Docker:
 
     sudo systemctl restart docker
+
+### Compose service-and-number naming
+
+The `tag` option uses Docker's [standard log-tag parser](https://github.com/moby/moby/blob/v24.0.7/daemon/logger/loggerutils/log_tag.go) and evaluates against Docker's `logger.Info` once when logging starts. Missing or empty `tag` keeps the existing container-name default. Empty rendered output falls back to the original name, then the first 12 characters of the container ID (or the whole ID if shorter). Invalid templates, execution failures, or names containing whitespace or control characters fail logging startup.
+
+This template combines the Compose [service name and instance number](https://github.com/docker/compose/blob/main/pkg/api/labels.go)—for example, `web-1`. It preserves hyphens in service names. If either label is missing or empty, it uses the full container name:
+
+```gotemplate
+{{$service := index .ContainerLabels "com.docker.compose.service"}}{{$number := index .ContainerLabels "com.docker.compose.container-number"}}{{if and $service $number}}{{$service}}-{{$number}}{{else}}{{.Name}}{{end}}
+```
+
+For daemon-wide Compose naming, use this valid JSON in `/etc/docker/daemon.json` (replace the endpoint and token):
+
+```json
+{
+  "log-driver": "ghcr.io/omnimodular/docker-plugin-swo",
+  "log-opts": {
+    "swo-url": "https://your-swo-endpoint/logs",
+    "swo-token": "YOUR_TOKEN",
+    "swo-json-limit": "20",
+    "tag": "{{$service := index .ContainerLabels \"com.docker.compose.service\"}}{{$number := index .ContainerLabels \"com.docker.compose.container-number\"}}{{if and $service $number}}{{$service}}-{{$number}}{{else}}{{.Name}}{{end}}"
+  }
+}
+```
+
+For Compose, the template above gives each container its own app name, such as `web-1` and `web-2`. Leave `swo-service-name` unset so SolarWinds uses those names; setting it overrides them. The hostname stays unchanged.
+
+Restart Docker and recreate existing application containers to apply the new logging defaults. Check Compose logging overrides as well, since they may override daemon defaults.
 
 ## Notes
 

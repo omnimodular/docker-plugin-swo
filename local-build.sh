@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
+set -euo pipefail
+test "$(id -u)" -eq 0 || { echo "error: run as root"; exit 1; }
 echo "Starting plugin build"
 
-echo "Docker cleanup"
-docker ps -qa | xargs -r docker rm
-docker image prune -f
-docker volume prune -f
+echo "Running tests"
+go test ./...
+go test -race ./...
 
-echo "Disabling the plugin if it exists"
-docker plugin disable docker-plugin-swo
-
-echo "Removing the plugin if it exists"
-docker plugin rm docker-plugin-swo
+if docker plugin inspect docker-plugin-swo > /dev/null 2>&1; then
+    if [ "$(docker plugin inspect --format '{{.Enabled}}' docker-plugin-swo)" = "true" ]; then
+        echo "Disabling the plugin"
+        docker plugin disable docker-plugin-swo
+    fi
+    echo "Removing the plugin"
+    docker plugin rm docker-plugin-swo
+fi
 
 #######################
 echo "Executable cleanup"
@@ -42,7 +46,7 @@ docker rm -vf "$id"
 docker rmi rootfsimage
 
 echo "Extracting the tar'd root fs"
-sudo tar -x --owner root --group root --no-same-owner -C swo/rootfs < rootfs.tar
+tar -x --owner root --group root --no-same-owner -C swo/rootfs < rootfs.tar
 
 echo "Removing the tar file"
 rm -f rootfs.tar

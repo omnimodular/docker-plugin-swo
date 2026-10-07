@@ -11,30 +11,32 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/docker/docker/daemon/logger"
+	"github.com/docker/docker/daemon/logger/loggerutils"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
-	swoDriverName  = "SWO Log Driver"
-	maxRetries     = 10
-	retrySleep     = 1 * time.Second
-	batchSize      = 10
-	flushInterval  = 1 * time.Second
-	queueSize      = 1000
+	swoDriverName = "SWO Log Driver"
+	maxRetries    = 10
+	retrySleep    = 1 * time.Second
+	batchSize     = 10
+	flushInterval = 1 * time.Second
+	queueSize     = 1000
 )
 
 type swoLogShipper struct {
-	url           string
-	token         string
-	serviceName   string
-	hostname      string
-	appName       string
-	jsonLimit     int
+	url               string
+	token             string
+	serviceName       string
+	hostname          string
+	appName           string
+	jsonLimit         int
 	syslogLevelPrefix bool
-	httpClient    *http.Client
+	httpClient        *http.Client
 
 	queue chan string
 	done  chan struct{}
@@ -71,30 +73,53 @@ func newSwoLogShipper(logCtx logger.Info) (*swoLogShipper, error) {
 		hostname = "unknown"
 	}
 
-	appName := strings.TrimPrefix(logCtx.ContainerName, "/")
-	if appName == "" {
-		appName = logCtx.ContainerID[:12]
+	appName, err := resolveAppName(logCtx)
+	if err != nil {
+		return nil, err
 	}
 
 	log.Infof("Creating SWO log shipper for %s (container: %s)", url, appName)
 
 	s := &swoLogShipper{
-		url:           url,
-		token:         token,
-		serviceName:   serviceName,
-		hostname:      hostname,
-		appName:       appName,
-		jsonLimit:     jsonLimit,
+		url:               url,
+		token:             token,
+		serviceName:       serviceName,
+		hostname:          hostname,
+		appName:           appName,
+		jsonLimit:         jsonLimit,
 		syslogLevelPrefix: syslogLevelPrefix,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
-		queue:         make(chan string, queueSize),
-		done:          make(chan struct{}),
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
+		queue:             make(chan string, queueSize),
+		done:              make(chan struct{}),
 	}
 
 	s.wg.Add(1)
 	go s.flushLoop()
 
 	return s, nil
+}
+
+// resolveAppName evaluates Docker's tag once, keeping the historical name/ID fallback.
+func resolveAppName(logCtx logger.Info) (string, error) {
+	appName, err := loggerutils.ParseLogTag(logCtx, "{{.Name}}")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to resolve log tag for syslog app name")
+	}
+	if appName == "" {
+		appName = strings.TrimPrefix(logCtx.ContainerName, "/")
+		if appName == "" {
+			appName = logCtx.ContainerID
+			if len(appName) > 12 {
+				appName = appName[:12]
+			}
+		}
+	}
+	if strings.ContainsFunc(appName, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	}) {
+		return "", fmt.Errorf("invalid log tag for syslog app name %q: whitespace and control characters are not allowed", appName)
+	}
+	return appName, nil
 }
 
 func (s *swoLogShipper) Name() string {
