@@ -36,6 +36,7 @@ type swoLogShipper struct {
 	appName           string
 	jsonLimit         int
 	syslogLevelPrefix bool
+	severityConfig    severityConfig
 	httpClient        *http.Client
 
 	queue chan string
@@ -55,6 +56,10 @@ func newSwoLogShipper(logCtx logger.Info) (*swoLogShipper, error) {
 	}
 
 	serviceName := logCtx.Config["swo-service-name"]
+	severityConfig, err := newSeverityConfig(logCtx.Config)
+	if err != nil {
+		return nil, err
+	}
 
 	jsonLimit := 20
 	if limitStr := logCtx.Config["swo-json-limit"]; limitStr != "" {
@@ -88,6 +93,7 @@ func newSwoLogShipper(logCtx logger.Info) (*swoLogShipper, error) {
 		appName:           appName,
 		jsonLimit:         jsonLimit,
 		syslogLevelPrefix: syslogLevelPrefix,
+		severityConfig:    severityConfig,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
 		queue:             make(chan string, queueSize),
 		done:              make(chan struct{}),
@@ -138,12 +144,12 @@ func (s *swoLogShipper) Log(msg *logger.Message) error {
 			severity = sev
 			line = minifyJSON(stripped, s.jsonLimit)
 		} else {
+			severity = s.severityConfig.severity(line)
 			line = minifyJSON(line, s.jsonLimit)
-			severity = syslogSeverity(line)
 		}
 	} else {
+		severity = s.severityConfig.severity(line)
 		line = minifyJSON(line, s.jsonLimit)
-		severity = syslogSeverity(line)
 	}
 	prival := 8 + severity
 
@@ -267,50 +273,6 @@ func parseSyslogLevelPrefix(msg string) (int, string, bool) {
 		return 0, msg, false
 	}
 	return int(d - '0'), msg[3:], true
-}
-
-// syslogSeverity maps a log message to a syslog severity level (RFC 5424).
-// Matches the Python log-sidecar implementation.
-func syslogSeverity(msg string) int {
-	// Try to parse as JSON and extract "level" field
-	var obj map[string]interface{}
-	if err := json.Unmarshal([]byte(msg), &obj); err == nil {
-		levelVal, ok := obj["level"]
-		if !ok {
-			return 6 // info
-		}
-		level, ok := levelVal.(string)
-		if !ok {
-			return 6
-		}
-		level = strings.ToLower(level)
-		switch {
-		case strings.HasPrefix(level, "emerg"):
-			return 0
-		case level == "alert":
-			return 1
-		case strings.HasPrefix(level, "crit"):
-			return 2
-		case level == "error":
-			return 3
-		case strings.HasPrefix(level, "warn"):
-			return 4
-		case level == "notice":
-			return 5
-		case strings.HasPrefix(level, "info"):
-			return 6
-		case level == "debug":
-			return 7
-		default:
-			return 6
-		}
-	}
-
-	// Plain text: check for "error" keyword
-	if strings.Contains(strings.ToLower(msg), "error") {
-		return 3
-	}
-	return 6
 }
 
 // recursiveReduce truncates large JSON structures while preserving shape.
