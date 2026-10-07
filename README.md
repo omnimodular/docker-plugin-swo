@@ -21,6 +21,8 @@ The plugin requires host network access for sending logs. Accept the permission 
 | `tag` | No | Docker log-tag template for the syslog app name | Container name (without leading `/`), then first 12 ID characters |
 | `swo-service-name` | No | Value for `service.name` OpenTelemetry resource attribute | — |
 | `swo-json-limit` | No | Max items per JSON object/array before truncation (0 to disable) | `20` |
+| `swo-level-paths` | No | JSON array of ordered [GJSON paths](https://github.com/tidwall/gjson/blob/master/SYNTAX.md) for severity extraction | `["level","LogLevel"]` |
+| `swo-level-map` | No | JSON object mapping selected values to syslog severity integers (0–7); keys are case-insensitive | `{}` |
 
 ## Usage
 
@@ -79,12 +81,55 @@ For Compose, the template above gives each container its own app name, such as `
 
 Restart Docker and recreate existing application containers to apply the new logging defaults. Check Compose logging overrides as well, since they may override daemon defaults.
 
+### Selecting JSON severity fields
+
+Severity extraction is configurable per container. Paths use **GJSON syntax**,
+not RFC 9535 JSONPath. Selectors are tried in order until a recognized string
+or mapped numeric value is found. Missing, null, non-scalar, empty, and unknown
+values fall through to the next selector. An unmatched JSON record uses info.
+Invalid JSON falls back to the existing plain-text error detection.
+
+The default paths support application `level` fields and .NET `LogLevel` fields.
+No application-specific JSON wrapper is built into the plugin. To read a level
+from JSON encoded inside a string, use GJSON's explicit `@fromstr` modifier.
+For example, Azure Functions wraps Node.js console output inside `Message`:
+
+```yaml
+logging:
+  driver: docker-plugin-swo
+  options:
+    swo-level-paths: '["level","Message|@fromstr|level","LogLevel"]'
+```
+
+MongoDB uses `s` and abbreviated severity values:
+
+```yaml
+logging:
+  driver: docker-plugin-swo
+  options:
+    swo-level-paths: '["s"]'
+    swo-level-map: '{"F":2,"E":3,"W":4,"I":6,"D1":7,"D2":7,"D3":7,"D4":7,"D5":7}'
+```
+
+These snippets assume the plugin alias, endpoint, and token are already
+configured in Docker's daemon defaults. They do not change the forwarded JSON
+payload. Severity is selected before JSON size limits are applied, so truncation
+cannot remove the field before it is read.
+
+Custom mappings take precedence over standard severity names for each selected
+value. Numeric fields require an explicit mapping (for example, `{"500":3}` for
+a numeric `status`). Mapping values must be integers: emergency 0, alert 1,
+critical 2, error 3, warning 4, notice 5, info 6, debug/trace 7. Malformed option
+JSON, empty path lists or paths, invalid map values, and case-insensitive map
+key collisions fail logging startup. A path with no GJSON match falls through.
+An enabled syslog `<N>` prefix still takes precedence over JSON selectors.
+
 ## Notes
 
 - `docker logs` is supported via Docker's built-in [dual logging](https://docs.docker.com/engine/logging/dual-logging/) cache (Docker 20.10+).
 - Log messages are formatted as RFC 5424 syslog and sent via HTTPS with bearer token auth.
 - JSON log messages are automatically minified (large objects/arrays truncated) before shipping.
-- Syslog severity is auto-detected from a `"level"` field in JSON messages, or from the presence of `"error"` in plain text.
+- By default, syslog severity is auto-detected from `"level"` and then `"LogLevel"` in JSON messages, using the first recognized value. .NET `Trace` maps to syslog debug. Plain text falls back to detecting the presence of `"error"`.
 
 ## Building locally
 
